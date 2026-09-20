@@ -17,13 +17,15 @@ def split_meta_line(line, delimiter=' '):
     """
 
     ###########################################################
-    # Here is your code
+    # .strip() убирает невидимый символ переноса строки (\n) в конце
+    # .split(delimiter) режет строку на части по разделителю
+    speaker_id, gender, file_path = line.strip().split(delimiter)
 
     ###########################################################
 
     return speaker_id, gender, file_path
 
-def preemphasis(signal, pre_emphasis=0.97):
+def preemphasis(signal, pre_emphasis=-0.97):
     #Here you need to preemphasis input signal with pre_emphasis coeffitient
 
     """
@@ -33,7 +35,16 @@ def preemphasis(signal, pre_emphasis=0.97):
     """
 
     ###########################################################
-    # Here is your code
+    # y[t] = x[t] - A * x[t-1], где A - коэффициент альфа,
+    # Для фильтра высоких частот альфа делать ОТРИЦАТЕЛЬНЫМ
+    signal = np.asarray(signal)
+    emphasized_signal = np.zeros_like(signal)
+    
+    # Первый отсчет y(0) оставляем как x(0), так как x(-1) не существует
+    emphasized_signal[0] = signal[0]
+    
+    # Строго по формуле из лабораторной: y(n) = x(n) + alpha * x(n-1)
+    emphasized_signal[1:] = signal[1:] + pre_emphasis * signal[:-1]
 
     ###########################################################
 
@@ -64,7 +75,21 @@ def framing(emphasized_signal, sample_rate=16000, frame_size=0.025, frame_stride
                                                  # truncating any samples from the original signal
 
     ###########################################################
-    # Here is your code to compute frames
+    # 1. Генерируем матрицу индексов для всех фреймов сразу
+    # Строка arange(0, frame_length) множится по вертикали num_frames раз
+    # Столбец смещений множится по горизонтали frame_length раз
+    indices = (
+        np.tile(np.arange(0, frame_length), (num_frames, 1)) + 
+        np.tile(np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
+    )
+    
+    # 2. Вырезаем фреймы из дополненного сигнала по сгенерированной матрице индексов
+    frames = pad_signal[indices.astype(np.int32, copy=False)]
+    
+    # 3. Накладываем оконную функцию Хэмминга на каждый фрейм
+    # np.hamming(frame_length) создает одномерное окно, 
+    # NumPy автоматически применит его к каждой строке матрицы frames
+    frames *= np.hamming(frame_length)
 
     ###########################################################
 
@@ -83,6 +108,8 @@ def power_spectrum(frames, NFFT=512):
 
     ###########################################################
     # Here is your code to compute pow_frames
+    # Спектр мощности — это квадрат модуля спектра (АЧХ), деленый на количество точек БПФ (NFFT)
+    pow_frames = (1.0 / NFFT) * (mag_frames ** 2)
 
     ###########################################################
 
@@ -104,15 +131,16 @@ def compute_fbank_filters(nfilt=40, sample_rate=16000, NFFT=512):
     ###########################################################
     # Here is your code to convert Convert Hz to Mel: 
     # high_freq -> high_freq_mel
-    
+    # задает верхний уровень mel-шкалы
+    high_freq_mel = 2595 * np.log10(1 + high_freq / 700)
     ###########################################################
 
     mel_points = np.linspace(low_freq_mel, high_freq_mel, nfilt + 2) # equally spaced in mel scale
 
     ###########################################################
     # Here is your code to convert Convert Mel to Hz: 
-    # mel_points -> hz_points
-    
+    # обратный перевод из mel_points -> hz_points
+    hz_points = 700 * (10**(mel_points / 2595) - 1)
     ###########################################################
 
     bin = np.floor((NFFT + 1) * hz_points / sample_rate)
@@ -141,7 +169,9 @@ def compute_fbanks_features(pow_frames, fbank):
     
     ###########################################################
     # Here is your code to compute filter_banks_features
-    
+    # Перемножаем спектр мощности каждого фрейма на АЧХ фильтров.
+    # Матричное умножение автоматически просуммирует коэффициенты внутри полос.
+    filter_banks_features = np.dot(pow_frames, fbank.T)
     ###########################################################
 
     filter_banks_features = np.where(filter_banks_features == 0, np.finfo(float).eps,
@@ -161,7 +191,12 @@ def compute_mfcc(filter_banks_features, num_ceps=20):
     
     ###########################################################
     # Here is your code to compute mfcc features
+    # 1. Применяем дискретное косинусное преобразование (DCT-II) вдоль оси фильтров (axis=1)
+    # Параметр norm='ortho' делает преобразование ортогональным (нормирует энергию)
+    raw_dct = dct(filter_banks_features, type=2, axis=1, norm='ortho')
     
+    # 2. Берем первые num_ceps коэффициентов для каждого фрейма
+    mfcc = raw_dct[:, :num_ceps]
     ###########################################################
 
     return mfcc
@@ -190,7 +225,15 @@ def mvn_floating(features, LC, RC, unbiased=False):
     
     ###########################################################
     # Here is your code to compute normalised features
+    # 1. Защищаем дисперсию от отрицательных или нулевых значений
+    # Если где-то дисперсия оказалась <= 0, временно заменяем на eps
+    s_safe = np.where(s <= 0, np.finfo(float).eps, s)
     
+    # 2. Вычисляем стандартное отклонение (корень из дисперсии)
+    sigma = np.sqrt(s_safe)
+    
+    # 3. Вычитаем среднее (f) и делим на стандартное отклонение (sigma)
+    normalised_features = (features - f) / sigma
     ###########################################################
 
     normalised_features[s == 0] = 0
